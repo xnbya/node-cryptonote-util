@@ -16,6 +16,7 @@
             "include_dirs": [
                 "src",
                 "src/contrib/epee/include",
+		"src/external/easylogging++/",
                 "<!(node -e \"require('nan')\")",
             ],
             "link_settings": {
