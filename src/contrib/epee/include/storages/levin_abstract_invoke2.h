@@ -30,6 +30,9 @@
 #include <boost/utility/value_init.hpp>
 #include "net/levin_base.h"
 
+#undef MONERO_DEFAULT_LOG_CATEGORY
+#define MONERO_DEFAULT_LOG_CATEGORY "net"
+
 namespace epee
 {
   namespace net_utils
@@ -48,7 +51,7 @@ namespace epee
       int res = transport.invoke(command, buff_to_send, buff_to_recv);
       if( res <=0 )
       {
-        LOG_PRINT_RED("Failed to invoke command " << command << " return code " << res, LOG_LEVEL_1);
+        MERROR("Failed to invoke command " << command << " return code " << res);
         return false;
       }
       serialization::portable_storage stg_ret;
@@ -154,7 +157,7 @@ namespace epee
       int res = transport.notify(command, buff_to_send, conn_id);
       if(res <=0 )
       {
-        LOG_PRINT_RED_L0("Failed to notify command " << command << " return code " << res);
+        MERROR("Failed to notify command " << command << " return code " << res);
         return false;
       }
       return true;
@@ -185,7 +188,7 @@ namespace epee
       }
 
       return res;
-    };
+    }
 
     template<class t_owner, class t_in_type, class t_context, class callback_t>
     int buff_to_t_adapter(t_owner* powner, int command, const std::string& in_buff, callback_t cb, t_context& context)
@@ -199,7 +202,7 @@ namespace epee
       boost::value_initialized<t_in_type> in_struct;
       static_cast<t_in_type&>(in_struct).load(strg);
       return cb(command, in_struct, context);
-    }; 
+    }
 
 #define CHAIN_LEVIN_INVOKE_MAP2(context_type) \
   int invoke(int command, const std::string& in_buff, std::string& buff_out, context_type& context) \
@@ -281,7 +284,7 @@ namespace epee
 
 
 #define END_INVOKE_MAP2() \
-  LOG_ERROR("Unkonown command:" << command); \
+  LOG_ERROR("Unknown command:" << command); \
   return LEVIN_ERROR_CONNECTION_HANDLER_NOT_DEFINED; \
   }
   }

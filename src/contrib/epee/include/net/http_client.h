@@ -30,6 +30,8 @@
 #include <boost/shared_ptr.hpp>
 #include <boost/regex.hpp>
 #include <boost/lexical_cast.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/utility/string_ref.hpp>
 //#include <mbstring.h>
 #include <algorithm>
 #include <cctype>
@@ -45,12 +47,16 @@
 #include "string_tools.h"
 #include "reg_exp_definer.h"
 #include "http_base.h" 
+#include "http_auth.h"
 #include "to_nonconst_iterator.h"
 #include "net_parse_helpers.h"
 
 //#include "shlwapi.h"
 
 //#pragma comment(lib, "shlwapi.lib")
+
+#undef MONERO_DEFAULT_LOG_CATEGORY
+#define MONERO_DEFAULT_LOG_CATEGORY "net.http"
 
 extern epee::critical_section gregexp_lock;
 
@@ -101,14 +107,14 @@ using namespace std;
 	//---------------------------------------------------------------------------
 	static inline const char* get_hex_vals()
 	{
-		static char hexVals[16] = {'0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F'};
+		static const char hexVals[16] = {'0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F'};
 		return hexVals;
 	}
 
 	static inline const char* get_unsave_chars()
 	{
 		//static char unsave_chars[] = "\"<>%\\^[]`+$,@:;/!#?=&";
-		static char unsave_chars[] = "\"<>%\\^[]`+$,@:;!#&";
+		static const char unsave_chars[] = "\"<>%\\^[]`+$,@:;!#&";
 		return unsave_chars;
 	}
 
@@ -156,6 +162,17 @@ using namespace std;
 
 		return csTmp;
 	}
+	static inline int get_index(const char *s, char c) { const char *ptr = (const char*)memchr(s, c, 16); return ptr ? ptr-s : -1; }
+	static inline 
+		std::string hex_to_dec_2bytes(const char *s)
+	{
+		const char *hex = get_hex_vals();
+		int i0 = get_index(hex, toupper(s[0]));
+		int i1 = get_index(hex, toupper(s[1]));
+		if (i0 < 0 || i1 < 0)
+			return std::string("%") + std::string(1, s[0]) + std::string(1, s[1]);
+		return std::string(1, i0 * 16 | i1);
+	}
 
 	static inline std::string convert(char val)
 	{
@@ -173,6 +190,25 @@ using namespace std;
 		{
 			if(is_unsafe(uri[i]))
 				result += convert(uri[i]);
+			else
+				result += uri[i];
+
+		}
+
+		return result;
+	}
+	static inline std::string convert_from_url_format(const std::string& uri)
+	{
+
+		std::string result;
+
+		for(size_t i = 0; i!= uri.size(); i++)
+		{
+			if(uri[i] == '%' && i + 2 < uri.size())
+			{
+				result += hex_to_dec_2bytes(uri.c_str() + i + 1);
+				i += 2;
+			}
 			else
 				result += uri[i];
 
@@ -203,9 +239,6 @@ using namespace std;
 
 		class http_simple_client: public i_target_handler
 		{
-		public:
-			
-
 		private:
 			enum reciev_machine_state
 			{
@@ -230,7 +263,7 @@ using namespace std;
 			blocked_mode_client m_net_client;
 			std::string m_host_buff;
 			std::string m_port;
-			unsigned int m_timeout;
+			http_client_auth m_auth;
 			std::string m_header_cache;
 			http_response_info m_response_info;
 			size_t m_len_in_summary;
@@ -243,23 +276,45 @@ using namespace std;
 			critical_section m_lock;
 
 		public:
-			void set_host_name(const std::string& name)
+			explicit http_simple_client()
+				: i_target_handler()
+				, m_net_client()
+				, m_host_buff()
+				, m_port()
+				, m_auth()
+				, m_header_cache()
+				, m_response_info()
+				, m_len_in_summary(0)
+				, m_len_in_remain(0)
+				, m_pcontent_encoding_handler(nullptr)
+				, m_state()
+				, m_chunked_state()
+				, m_chunked_cache()
+				, m_lock()
+			{}
+
+			bool set_server(const std::string& address, boost::optional<login> user)
+			{
+				http::url_content parsed{};
+				const bool r = parse_url(address, parsed);
+				CHECK_AND_ASSERT_MES(r, false, "failed to parse url: " << address);
+				set_server(std::move(parsed.host), std::to_string(parsed.port), std::move(user));
+				return true;
+			}
+
+			void set_server(std::string host, std::string port, boost::optional<login> user)
 			{
 				CRITICAL_REGION_LOCAL(m_lock);
-				m_host_buff = name;
+				disconnect();
+				m_host_buff = std::move(host);
+				m_port = std::move(port);
+                                m_auth = user ? http_client_auth{std::move(*user)} : http_client_auth{};
 			}
-      bool connect(const std::string& host, int port, unsigned int timeout)
-      {
-        return connect(host, std::to_string(port), timeout);
-      }
-      bool connect(const std::string& host, const std::string& port, unsigned int timeout)
+
+      bool connect(std::chrono::milliseconds timeout)
       {
         CRITICAL_REGION_LOCAL(m_lock);
-        m_host_buff = host;
-        m_port = port;
-        m_timeout = timeout;
-
-        return m_net_client.connect(host,  port, timeout, timeout);
+        return m_net_client.connect(m_host_buff, m_port, timeout);
       }
 			//---------------------------------------------------------------------------
 			bool disconnect()
@@ -282,59 +337,96 @@ using namespace std;
 				return true;
 			}
 			//---------------------------------------------------------------------------
+			virtual bool on_header(const http_response_info &headers)
+      {
+        return true;
+      }
+			//---------------------------------------------------------------------------
 			inline 
-				bool invoke_get(const std::string& uri, const std::string& body = std::string(), const http_response_info** ppresponse_info = NULL, const fields_list& additional_params = fields_list())
+				bool invoke_get(const boost::string_ref uri, std::chrono::milliseconds timeout, const std::string& body = std::string(), const http_response_info** ppresponse_info = NULL, const fields_list& additional_params = fields_list())
 			{
 					CRITICAL_REGION_LOCAL(m_lock);
-					return invoke(uri, "GET", body, ppresponse_info, additional_params);
+					return invoke(uri, "GET", body, timeout, ppresponse_info, additional_params);
 			}
 
 			//---------------------------------------------------------------------------
-			inline bool invoke(const std::string& uri, const std::string& method, const std::string& body, const http_response_info** ppresponse_info = NULL, const fields_list& additional_params = fields_list())
+			inline bool invoke(const boost::string_ref uri, const boost::string_ref method, const std::string& body, std::chrono::milliseconds timeout, const http_response_info** ppresponse_info = NULL, const fields_list& additional_params = fields_list())
 			{
 				CRITICAL_REGION_LOCAL(m_lock);
 				if(!is_connected())
 				{
-					LOG_PRINT("Reconnecting...", LOG_LEVEL_3);
-					if(!connect(m_host_buff, m_port, m_timeout))
+					MDEBUG("Reconnecting...");
+					if(!connect(timeout))
 					{
-						LOG_PRINT("Failed to connect to " << m_host_buff << ":" << m_port, LOG_LEVEL_3);
+						MDEBUG("Failed to connect to " << m_host_buff << ":" << m_port);
 						return false;
 					}
 				}
-				m_response_info.clear();
-				std::string req_buff = 	method + " ";
-				req_buff += uri + " HTTP/1.1\r\n" + 
-					"Host: "+ m_host_buff +"\r\n" +	"Content-Length: " + boost::lexical_cast<std::string>(body.size()) + "\r\n";
 
+				std::string req_buff{};
+				req_buff.reserve(2048);
+				req_buff.append(method.data(), method.size()).append(" ").append(uri.data(), uri.size()).append(" HTTP/1.1\r\n");
+				add_field(req_buff, "Host", m_host_buff);
+				add_field(req_buff, "Content-Length", std::to_string(body.size()));
 
 				//handle "additional_params"
-				for(fields_list::const_iterator it = additional_params.begin(); it!=additional_params.end(); it++)
-					req_buff += it->first + ": " + it->second + "\r\n";
-				req_buff += "\r\n";
-				//--
+				for(const auto& field : additional_params)
+					add_field(req_buff, field);
 
-				bool res = m_net_client.send(req_buff);
-				CHECK_AND_ASSERT_MES(res, false, "HTTP_CLIENT: Failed to SEND");
-				if(body.size())
-					res = m_net_client.send(body);
-				CHECK_AND_ASSERT_MES(res, false, "HTTP_CLIENT: Failed to SEND");
+				for (unsigned sends = 0; sends < 2; ++sends)
+				{
+					const std::size_t initial_size = req_buff.size();
+					const auto auth = m_auth.get_auth_field(method, uri);
+					if (auth)
+						add_field(req_buff, *auth);
 
-				if(ppresponse_info)
-					*ppresponse_info = &m_response_info;
+					req_buff += "\r\n";
+					//--
 
-				m_state = reciev_machine_state_header;
-				return handle_reciev();
+					bool res = m_net_client.send(req_buff, timeout);
+					CHECK_AND_ASSERT_MES(res, false, "HTTP_CLIENT: Failed to SEND");
+					if(body.size())
+						res = m_net_client.send(body, timeout);
+					CHECK_AND_ASSERT_MES(res, false, "HTTP_CLIENT: Failed to SEND");
+
+
+					m_response_info.clear();
+					m_state = reciev_machine_state_header;
+					if (!handle_reciev(timeout))
+						return false;
+					if (m_response_info.m_response_code != 401)
+					{
+						if(ppresponse_info)
+							*ppresponse_info = std::addressof(m_response_info);
+						return true;
+					}
+
+					switch (m_auth.handle_401(m_response_info))
+					{
+					case http_client_auth::kSuccess:
+						break;
+					case http_client_auth::kBadPassword:
+                                                sends = 2;
+						break;
+					default:
+					case http_client_auth::kParseFailure:
+						LOG_ERROR("Bad server response for authentication");
+						return false;
+					}
+					req_buff.resize(initial_size); // rollback for new auth generation
+				}
+				LOG_ERROR("Client has incorrect username/password for server requiring authentication");
+				return false;
 			}
 			//---------------------------------------------------------------------------
-			inline bool invoke_post(const std::string& uri, const std::string& body,  const http_response_info** ppresponse_info = NULL, const fields_list& additional_params = fields_list())
+			inline bool invoke_post(const boost::string_ref uri, const std::string& body, std::chrono::milliseconds timeout, const http_response_info** ppresponse_info = NULL, const fields_list& additional_params = fields_list())
 			{
 				CRITICAL_REGION_LOCAL(m_lock);
-				return invoke(uri, "POST", body, ppresponse_info, additional_params);
+				return invoke(uri, "POST", body, timeout, ppresponse_info, additional_params);
 			}
 		private: 
 			//---------------------------------------------------------------------------
-			inline bool handle_reciev()
+			inline bool handle_reciev(std::chrono::milliseconds timeout)
 			{
 				CRITICAL_REGION_LOCAL(m_lock);
 				bool keep_handling = true;
@@ -344,9 +436,9 @@ using namespace std;
 				{
 					if(need_more_data)
 					{
-						if(!m_net_client.recv(recv_buffer))
+						if(!m_net_client.recv(recv_buffer, timeout))
 						{
-							LOG_PRINT("Unexpected reciec fail", LOG_LEVEL_3);
+							MERROR("Unexpected recv fail");
 							m_state = reciev_machine_state_error;
             }
             if(!recv_buffer.size())
@@ -418,6 +510,12 @@ using namespace std;
 					m_header_cache.erase(m_header_cache.begin()+pos+4, m_header_cache.end());
 
 					analize_cached_header_and_invoke_state();
+          if (!on_header(m_response_info))
+          {
+            MDEBUG("Connection cancelled by on_header");
+            m_state = reciev_machine_state_done;
+            return false;
+          }
 					m_header_cache.clear();
 					if(!recv_buff.size() && (m_state != reciev_machine_state_error && m_state != reciev_machine_state_done))
 						need_more_data = true;
@@ -434,13 +532,17 @@ using namespace std;
 				CRITICAL_REGION_LOCAL(m_lock);
 				if(!recv_buff.size())
 				{
-					LOG_PRINT("Warning: Content-Len mode, but connection unexpectedly closed", LOG_LEVEL_3);
+					MERROR("Warning: Content-Len mode, but connection unexpectedly closed");
 					m_state = reciev_machine_state_done;
 					return true;
 				}
 				CHECK_AND_ASSERT_MES(m_len_in_remain >= recv_buff.size(), false, "m_len_in_remain >= recv_buff.size()");
 				m_len_in_remain -= recv_buff.size();
-				m_pcontent_encoding_handler->update_in(recv_buff);
+				if (!m_pcontent_encoding_handler->update_in(recv_buff))
+				{
+					m_state = reciev_machine_state_done;
+					return false;
+				}
 
 				if(m_len_in_remain == 0)
 					m_state = reciev_machine_state_done;
@@ -509,7 +611,7 @@ using namespace std;
 							if(0 == chunk_size)
 							{
 								//Here is a small confusion
-								//In breif - if the chunk is the last one we need to get terminating sequence
+								//In brief - if the chunk is the last one we need to get terminating sequence
 								//along with the cipher, generally in the "ddd\r\n\r\n" form
 
 								for(it++;it != buff.end(); it++)
@@ -548,7 +650,7 @@ using namespace std;
         CRITICAL_REGION_LOCAL(m_lock);
 				if(!recv_buff.size())
 				{
-					LOG_PRINT("Warning: CHUNKED mode, but connection unexpectedly closed", LOG_LEVEL_3);
+					MERROR("Warning: CHUNKED mode, but connection unexpectedly closed");
 					m_state = reciev_machine_state_done;
 					return true;
 				}
@@ -613,7 +715,11 @@ using namespace std;
 								m_len_in_remain = 0;
 							}
 
-							m_pcontent_encoding_handler->update_in(chunk_body);
+							if (!m_pcontent_encoding_handler->update_in(chunk_body))
+							{
+								m_state = reciev_machine_state_error;
+								return false;
+							}
 
 							if(!m_len_in_remain)
 								m_chunked_state = http_chunked_state_chunk_head;
@@ -635,13 +741,13 @@ using namespace std;
 			inline
 				bool parse_header(http_header_info& body_info, const std::string& m_cache_to_process)
 			{ 
-				LOG_FRAME("http_stream_filter::parse_cached_header(*)", LOG_LEVEL_4);
+				MTRACE("http_stream_filter::parse_cached_header(*)");
 				
 				STATIC_REGEXP_EXPR_1(rexp_mach_field, 
-					"\n?((Connection)|(Referer)|(Content-Length)|(Content-Type)|(Transfer-Encoding)|(Content-Encoding)|(Host)|(Cookie)"
-					//  12            3         4                5              6                   7                  8      9    
+					"\n?((Connection)|(Referer)|(Content-Length)|(Content-Type)|(Transfer-Encoding)|(Content-Encoding)|(Host)|(Cookie)|(User-Agent)"
+					//  12            3         4                5              6                   7                  8      9        10
 					"|([\\w-]+?)) ?: ?((.*?)(\r?\n))[^\t ]",	
-					//10             1112   13 
+					//11             1213   14
 					boost::regex::icase | boost::regex::normal);
 
 				boost::smatch		result;
@@ -653,8 +759,8 @@ using namespace std;
 				//lookup all fields and fill well-known fields
 				while( boost::regex_search( it_current_bound, it_end_bound, result, rexp_mach_field, boost::match_default) && result[0].matched) 
 				{
-					const size_t field_val = 12;
-					//const size_t field_etc_name = 10;
+					const size_t field_val = 13;
+					//const size_t field_etc_name = 11;
 
 					int i = 2; //start position = 2
 					if(result[i++].matched)//"Connection"
@@ -675,8 +781,10 @@ using namespace std;
 					}
 					else if(result[i++].matched)//"Cookie"
 						body_info.m_cookie = result[field_val];
+					else if(result[i++].matched)//"User-Agent"
+						body_info.m_user_agent = result[field_val];
 					else if(result[i++].matched)//e.t.c (HAVE TO BE MATCHED!)
-					{;}
+						body_info.m_etc_fields.emplace_back(result[11], result[field_val]);
 					else
 					{CHECK_AND_ASSERT_MES(false, false, "http_stream_filter::parse_cached_header() not matched last entry in:"<<m_cache_to_process);}
 
@@ -801,7 +909,7 @@ using namespace std;
 				}else
 				{   //Apparently there are no signs of the form of transfer, will receive data until the connection is closed
 					m_state = reciev_machine_state_error;
-					LOG_PRINT("Undefinded transfer type, consider http_body_transfer_connection_close method. header: " << m_header_cache, LOG_LEVEL_2);
+					MERROR("Undefinded transfer type, consider http_body_transfer_connection_close method. header: " << m_header_cache);
 					return false;
 				} 
 				return false;
@@ -843,33 +951,6 @@ using namespace std;
 				return true;
 			}
 		};
-
-
-
-    /************************************************************************/
-    /*                                                                      */
-    /************************************************************************/
-  //inline 
-    template<class t_transport>
-    bool invoke_request(const std::string& url, t_transport& tr, unsigned int timeout, const http_response_info** ppresponse_info, const std::string& method = "GET", const std::string& body = std::string(), const fields_list& additional_params = fields_list())
-    {
-      http::url_content u_c;
-      bool res = parse_url(url, u_c);
-
-      if(!tr.is_connected() && !u_c.host.empty())
-      {
-        CHECK_AND_ASSERT_MES(res, false, "failed to parse url: " << url);
-
-        if(!u_c.port)
-          u_c.port = 80;//default for http
-
-        res = tr.connect(u_c.host, static_cast<int>(u_c.port), timeout);
-        CHECK_AND_ASSERT_MES(res, false, "failed to connect " << u_c.host << ":" << u_c.port);
-      }
-
-      return tr.invoke(u_c.uri, method, body, ppresponse_info, additional_params);
-    }
-
 	}
 }
 }
