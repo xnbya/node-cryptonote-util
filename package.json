@@ -1,21 +1,89 @@
 {
-  "name": "cryptonote-util",
-  "version": "0.0.2",
-  "main": "cryptonote",
+  "_args": [
+    [
+      {
+        "raw": "cryptonote-util@git://github.com/xnbya/node-cryptonote-util.git#stretch",
+        "scope": null,
+        "escapedName": "cryptonote-util",
+        "name": "cryptonote-util",
+        "rawSpec": "git://github.com/xnbya/node-cryptonote-util.git#stretch",
+        "spec": "git://github.com/xnbya/node-cryptonote-util.git#stretch",
+        "type": "hosted",
+        "hosted": {
+          "type": "github",
+          "ssh": "git@github.com:xnbya/node-cryptonote-util.git#stretch",
+          "sshUrl": "git+ssh://git@github.com/xnbya/node-cryptonote-util.git#stretch",
+          "httpsUrl": "git+https://github.com/xnbya/node-cryptonote-util.git#stretch",
+          "gitUrl": "git://github.com/xnbya/node-cryptonote-util.git#stretch",
+          "shortcut": "github:xnbya/node-cryptonote-util#stretch",
+          "directUrl": "https://raw.githubusercontent.com/xnbya/node-cryptonote-util/stretch/package.json"
+        }
+      },
+      "/root/pooljs_new"
+    ]
+  ],
+  "_from": "git://github.com/xnbya/node-cryptonote-util.git#stretch",
+  "_id": "cryptonote-util@0.0.2",
+  "_inCache": true,
+  "_location": "/cryptonote-util",
+  "_phantomChildren": {},
+  "_requested": {
+    "raw": "cryptonote-util@git://github.com/xnbya/node-cryptonote-util.git#stretch",
+    "scope": null,
+    "escapedName": "cryptonote-util",
+    "name": "cryptonote-util",
+    "rawSpec": "git://github.com/xnbya/node-cryptonote-util.git#stretch",
+    "spec": "git://github.com/xnbya/node-cryptonote-util.git#stretch",
+    "type": "hosted",
+    "hosted": {
+      "type": "github",
+      "ssh": "git@github.com:xnbya/node-cryptonote-util.git#stretch",
+      "sshUrl": "git+ssh://git@github.com/xnbya/node-cryptonote-util.git#stretch",
+      "httpsUrl": "git+https://github.com/xnbya/node-cryptonote-util.git#stretch",
+      "gitUrl": "git://github.com/xnbya/node-cryptonote-util.git#stretch",
+      "shortcut": "github:xnbya/node-cryptonote-util#stretch",
+      "directUrl": "https://raw.githubusercontent.com/xnbya/node-cryptonote-util/stretch/package.json"
+    }
+  },
+  "_requiredBy": [
+    "/"
+  ],
+  "_resolved": "git://github.com/xnbya/node-cryptonote-util.git#527e2b49c393d8ed293d0f48b44747b317429a02",
+  "_shasum": "e17218e9623a0f0d4d73ad0d3c25bd819ff28bb4",
+  "_shrinkwrap": null,
+  "_spec": "cryptonote-util@git://github.com/xnbya/node-cryptonote-util.git#stretch",
+  "_where": "/root/pooljs_new",
   "author": {
     "name": "LucasJones",
     "email": "lucasjonesdev@hotmail.co.uk"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/clintar/node-cryptonote-util.git"
+  "bugs": {
+    "url": "https://github.com/clintar/node-cryptonote-util/issues"
   },
   "dependencies": {
     "bindings": "*",
     "nan": "^2.0.0"
   },
+  "description": "Node-Cryptonote-Util ====================",
+  "devDependencies": {},
+  "gitHead": "527e2b49c393d8ed293d0f48b44747b317429a02",
+  "gypfile": true,
+  "homepage": "https://github.com/clintar/node-cryptonote-util#readme",
   "keywords": [
     "cryptonight",
     "cryptonote"
-  ]
+  ],
+  "main": "cryptonote",
+  "name": "cryptonote-util",
+  "optionalDependencies": {},
+  "readme": "Node-Cryptonote-Util\n====================\n\nDependencies\n------------\n\n* Boost (http://www.boost.org/)",
+  "readmeFilename": "README.md",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clintar/node-cryptonote-util.git"
+  },
+  "scripts": {
+    "install": "node-gyp rebuild"
+  },
+  "version": "0.0.2"
 }

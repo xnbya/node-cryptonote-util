@@ -13,6 +13,9 @@
 #include "common/base58.h"
 #include "serialization/binary_utils.h"
 #include <nan.h>
+#include "easylogging++.h"
+
+INITIALIZE_EASYLOGGINGPP
 
 #define THROW_ERROR_EXCEPTION(x) Nan::ThrowError(x)
 

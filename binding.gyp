@@ -12,11 +12,12 @@
                 "src/crypto/hash.c",
                 "src/crypto/keccak.c",
                 "src/common/base58.cpp",
+                "src/external/easylogging++/easylogging++.cc"
             ],
             "include_dirs": [
                 "src",
                 "src/contrib/epee/include",
-		"src/external/easylogging++/",
+		"src/external/easylogging++",
                 "<!(node -e \"require('nan')\")",
             ],
             "link_settings": {
@@ -27,7 +28,7 @@
             },
             "cflags_cc!": [ "-fno-exceptions", "-fno-rtti" ],
             "cflags_cc": [
-                  "-std=c++0x",
+                  "-std=c++11",
                   "-fexceptions",
                   "-frtti",
             ],
